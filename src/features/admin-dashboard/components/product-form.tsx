@@ -1,0 +1,690 @@
+"use client";
+
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  Save,
+  ArrowLeft,
+  Plus,
+  Trash2,
+  Image as ImageIcon,
+  Sparkles,
+  Info,
+  Check,
+} from "lucide-react";
+import { slugify } from "@/utils/slugify";
+import type { Product, ProductCategory, ProductBadge } from "@/types/product";
+import { saveProduct } from "../server/actions";
+
+interface ProductFormProps {
+  initialProduct?: Product;
+  isEdit?: boolean;
+}
+
+const CATEGORIES: ProductCategory[] = [
+  "T-Shirts",
+  "Shirts",
+  "Hoodies",
+  "Bottoms",
+  "Jackets",
+  "Accessories",
+];
+
+const BADGES: (ProductBadge | "None")[] = [
+  "None",
+  "Bestseller",
+  "New",
+  "Trending",
+  "Sale",
+];
+
+const AVAILABLE_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "28", "30", "32", "34", "36"];
+
+export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Form State
+  const [title, setTitle] = useState(initialProduct?.title || "");
+  const [slug, setSlug] = useState(initialProduct?.slug || "");
+  const [category, setCategory] = useState<ProductCategory>(initialProduct?.category || "T-Shirts");
+  const [badge, setBadge] = useState<ProductBadge | "None">(initialProduct?.badge || "None");
+  const [price, setPrice] = useState<number>(initialProduct?.price || 999);
+  const [originalPrice, setOriginalPrice] = useState<number | undefined>(initialProduct?.originalPrice || undefined);
+  const [totalStock, setTotalStock] = useState<number>(initialProduct?.totalStock ?? 80);
+  const [lowStockThreshold, setLowStockThreshold] = useState<number>(initialProduct?.lowStockThreshold ?? 10);
+  const [inStock, setInStock] = useState<boolean>(initialProduct?.inStock ?? true);
+  const [featured, setFeatured] = useState<boolean>(initialProduct?.featured ?? false);
+
+  // Clothing Attributes
+  const [fit, setFit] = useState(initialProduct?.fit || "Relaxed Fit");
+  const [selectedSizes, setSelectedSizes] = useState<string[]>(
+    initialProduct?.sizes || ["S", "M", "L", "XL"]
+  );
+  const [colors, setColors] = useState<{ name: string; hex: string }[]>(
+    initialProduct?.colors || [
+      { name: "Pitch Black", hex: "#121212" },
+      { name: "Bone White", hex: "#EAE6DF" },
+    ]
+  );
+  const [newColorName, setNewColorName] = useState("");
+  const [newColorHex, setNewColorHex] = useState("#936037");
+
+  // Descriptions & Details
+  const [description, setDescription] = useState(
+    initialProduct?.description ||
+      "Crafted from premium heavyweight combed organic cotton. Features architectural draping with reinforced seams."
+  );
+  const [detailsText, setDetailsText] = useState(
+    initialProduct?.details?.join("\n") ||
+      "280 GSM heavyweight combed cotton\nDrop-shoulder silhouette\nPre-shrunk to retain drape"
+  );
+  const [fabricCareText, setFabricCareText] = useState(
+    initialProduct?.fabricCare?.join("\n") ||
+      "100% Organic Combed Cotton\nMachine wash cold inside out\nDo not tumble dry"
+  );
+
+  // Images
+  const [mainImage, setMainImage] = useState(
+    initialProduct?.image || "/images/nxtvie/product-oversized-tee-hd.jpg"
+  );
+  const [galleryImages, setGalleryImages] = useState<string[]>(
+    initialProduct?.images || [
+      "/images/nxtvie/product-oversized-tee-hd.jpg",
+      "/images/nxtvie/gallery-1.jpg",
+      "/images/nxtvie/gallery-4.jpg",
+    ]
+  );
+  const [newImageUrl, setNewImageUrl] = useState("");
+
+  const handleTitleChange = (val: string) => {
+    setTitle(val);
+    if (!isEdit) {
+      setSlug(slugify(val));
+    }
+  };
+
+  const toggleSize = (size: string) => {
+    setSelectedSizes((prev) =>
+      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size]
+    );
+  };
+
+  const addColor = () => {
+    if (!newColorName.trim()) return;
+    setColors((prev) => [...prev, { name: newColorName.trim(), hex: newColorHex }]);
+    setNewColorName("");
+  };
+
+  const removeColor = (idx: number) => {
+    setColors((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const addGalleryImage = () => {
+    if (!newImageUrl.trim()) return;
+    setGalleryImages((prev) => [...prev, newImageUrl.trim()]);
+    setNewImageUrl("");
+  };
+
+  const removeGalleryImage = (idx: number) => {
+    setGalleryImages((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      setMessage({ type: "error", text: "Please enter a product title." });
+      return;
+    }
+    if (selectedSizes.length === 0) {
+      setMessage({ type: "error", text: "Please select at least one apparel size." });
+      return;
+    }
+    if (colors.length === 0) {
+      setMessage({ type: "error", text: "Please add at least one color swatch." });
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const details = detailsText.split("\n").filter((l) => l.trim().length > 0);
+      const fabricCare = fabricCareText.split("\n").filter((l) => l.trim().length > 0);
+
+      // Generate variant matrix
+      const variants = selectedSizes.flatMap((s) =>
+        colors.map((c) => ({
+          sku: `${slug.toUpperCase().slice(0, 4)}-${s}-${c.name.toUpperCase().slice(0, 3)}`,
+          size: s,
+          color: c.name,
+          stock: Math.max(1, Math.floor(totalStock / (selectedSizes.length * colors.length))),
+          price,
+        }))
+      );
+
+      const productPayload: Partial<Product> = {
+        id: initialProduct?.id,
+        title: title.trim(),
+        slug: slug.trim() || slugify(title),
+        category,
+        badge: badge === "None" ? undefined : badge,
+        price: Number(price),
+        originalPrice: originalPrice ? Number(originalPrice) : undefined,
+        totalStock: Number(totalStock),
+        lowStockThreshold: Number(lowStockThreshold),
+        inStock,
+        featured,
+        fit,
+        sizes: selectedSizes,
+        colors,
+        description: description.trim(),
+        details,
+        fabricCare,
+        image: mainImage.trim(),
+        images: galleryImages.length > 0 ? galleryImages : [mainImage.trim()],
+        variants,
+      };
+
+      const res = await saveProduct(productPayload);
+      if (res.success) {
+        setMessage({
+          type: "success",
+          text: isEdit ? "Apparel updated successfully!" : "New apparel created successfully!",
+        });
+        setTimeout(() => {
+          router.push("/admin/products");
+          router.refresh();
+        }, 800);
+      } else {
+        setMessage({ type: "error", text: res.error || "Failed to save product." });
+      }
+    } catch (err: any) {
+      setMessage({ type: "error", text: err?.message || "Failed to save apparel item." });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} style={{ maxWidth: "1100px", margin: "0 auto" }}>
+      {/* Action Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "24px",
+          gap: "16px",
+          flexWrap: "wrap",
+        }}
+      >
+        <Link
+          href="/admin/products"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            color: "var(--adm-text-muted)",
+            fontSize: "0.85rem",
+            textDecoration: "none",
+          }}
+        >
+          <ArrowLeft size={16} />
+          <span>Back to Catalog</span>
+        </Link>
+
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="admin-action-btn-primary"
+          >
+            <Save size={16} />
+            <span>{submitting ? "Saving..." : isEdit ? "Update Apparel" : "Publish Apparel"}</span>
+          </button>
+        </div>
+      </div>
+
+      {message && (
+        <div
+          style={{
+            padding: "14px 18px",
+            borderRadius: "8px",
+            marginBottom: "24px",
+            backgroundColor: message.type === "success" ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.12)",
+            border: `1px solid ${message.type === "success" ? "rgba(16, 185, 129, 0.3)" : "rgba(239, 68, 68, 0.3)"}`,
+            color: message.type === "success" ? "#34D399" : "#F87171",
+            fontSize: "0.88rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
+          {message.type === "success" ? <Check size={18} /> : <Info size={18} />}
+          <span>{message.text}</span>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "24px" }}>
+        {/* Left Column: Core Product Info */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Card 1: General Details */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Apparel Details
+            </h3>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">
+                Apparel Title <span className="required">*</span>
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => handleTitleChange(e.target.value)}
+                placeholder="e.g. Oversized Heavyweight Boxy Tee"
+                required
+                className="admin-input"
+              />
+            </div>
+
+            <div className="admin-form-grid-2">
+              <div className="admin-form-group">
+                <label className="admin-form-label">URL Slug</label>
+                <input
+                  type="text"
+                  value={slug}
+                  onChange={(e) => setSlug(e.target.value)}
+                  placeholder="oversized-heavyweight-tee"
+                  className="admin-input"
+                  style={{ fontFamily: "var(--adm-font-mono)", fontSize: "0.85rem" }}
+                />
+              </div>
+
+              <div className="admin-form-group">
+                <label className="admin-form-label">Fit / Cut Silhouette</label>
+                <select
+                  value={fit}
+                  onChange={(e) => setFit(e.target.value)}
+                  className="admin-select"
+                  style={{ width: "100%", padding: "10px 14px" }}
+                >
+                  <option value="Oversized Fit">Oversized Fit</option>
+                  <option value="Relaxed Fit">Relaxed Fit</option>
+                  <option value="Boxy Cut">Boxy Cut</option>
+                  <option value="Regular Fit">Regular Fit</option>
+                  <option value="Slim Fit">Slim Fit</option>
+                  <option value="Tailored">Tailored</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Product Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                className="admin-textarea"
+                placeholder="Detailed craft description highlighting the texture, feel, and silhouette..."
+              />
+            </div>
+          </div>
+
+          {/* Card 2: Clothing Sizes & Colors */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Sizes &amp; Colorways
+            </h3>
+
+            {/* Sizes Selection */}
+            <div className="admin-form-group">
+              <label className="admin-form-label">
+                Available Sizes ({selectedSizes.length} selected) <span className="required">*</span>
+              </label>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "4px" }}>
+                {AVAILABLE_SIZES.map((size) => {
+                  const isSelected = selectedSizes.includes(size);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => toggleSize(size)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: "8px",
+                        fontSize: "0.85rem",
+                        fontWeight: 700,
+                        border: isSelected ? "1.5px solid var(--adm-gold)" : "1px solid var(--adm-border)",
+                        backgroundColor: isSelected ? "rgba(242, 172, 36, 0.15)" : "#141312",
+                        color: isSelected ? "var(--adm-gold)" : "var(--adm-text-secondary)",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      {size}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Colors list */}
+            <div className="admin-form-group" style={{ marginTop: "16px" }}>
+              <label className="admin-form-label">
+                Color Options ({colors.length} active) <span className="required">*</span>
+              </label>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "14px" }}>
+                {colors.map((c, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      backgroundColor: "#161514",
+                      border: "1px solid var(--adm-border)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: "16px",
+                        height: "16px",
+                        borderRadius: "50%",
+                        backgroundColor: c.hex,
+                        border: "1px solid rgba(255,255,255,0.2)",
+                        display: "inline-block",
+                      }}
+                    />
+                    <span style={{ fontSize: "0.82rem", color: "var(--adm-text)" }}>{c.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeColor(idx)}
+                      style={{ color: "var(--adm-text-muted)", marginLeft: "4px" }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Color inputs */}
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={newColorName}
+                  onChange={(e) => setNewColorName(e.target.value)}
+                  placeholder="Color Name (e.g. Mineral Grey)"
+                  className="admin-input"
+                  style={{ flex: 1 }}
+                />
+                <input
+                  type="color"
+                  value={newColorHex}
+                  onChange={(e) => setNewColorHex(e.target.value)}
+                  style={{
+                    width: "42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderRadius: "6px",
+                    border: "1px solid var(--adm-border)",
+                    backgroundColor: "#141312",
+                    cursor: "pointer",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={addColor}
+                  className="admin-action-btn-secondary"
+                  style={{ padding: "10px 14px" }}
+                >
+                  <Plus size={16} /> Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 3: Fabric & Care + Details */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Technical Specs &amp; Care
+            </h3>
+
+            <div className="admin-form-grid-2">
+              <div className="admin-form-group">
+                <label className="admin-form-label">
+                  Fabric &amp; Care (one bullet per line)
+                </label>
+                <textarea
+                  value={fabricCareText}
+                  onChange={(e) => setFabricCareText(e.target.value)}
+                  rows={4}
+                  className="admin-textarea"
+                />
+              </div>
+
+              <div className="admin-form-group">
+                <label className="admin-form-label">
+                  Key Details (one bullet per line)
+                </label>
+                <textarea
+                  value={detailsText}
+                  onChange={(e) => setDetailsText(e.target.value)}
+                  rows={4}
+                  className="admin-textarea"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Pricing, Organization, Media */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Card 4: Pricing & Inventory */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Pricing &amp; Inventory
+            </h3>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">
+                Retail Price (INR ₹) <span className="required">*</span>
+              </label>
+              <input
+                type="number"
+                value={price}
+                onChange={(e) => setPrice(Number(e.target.value))}
+                min={1}
+                required
+                className="admin-input"
+              />
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">
+                Original Price (MRP ₹)
+              </label>
+              <input
+                type="number"
+                value={originalPrice || ""}
+                onChange={(e) => setOriginalPrice(e.target.value ? Number(e.target.value) : undefined)}
+                placeholder="Optional strike-through price"
+                className="admin-input"
+              />
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Total Stock Units</label>
+              <input
+                type="number"
+                value={totalStock}
+                onChange={(e) => setTotalStock(Number(e.target.value))}
+                min={0}
+                className="admin-input"
+              />
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Low Stock Alert Threshold</label>
+              <input
+                type="number"
+                value={lowStockThreshold}
+                onChange={(e) => setLowStockThreshold(Number(e.target.value))}
+                min={1}
+                className="admin-input"
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "12px" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", fontSize: "0.85rem", color: "var(--adm-text)" }}>
+                <input
+                  type="checkbox"
+                  checked={inStock}
+                  onChange={(e) => setInStock(e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "var(--adm-gold)" }}
+                />
+                Available in stock
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", fontSize: "0.85rem", color: "var(--adm-text)" }}>
+                <input
+                  type="checkbox"
+                  checked={featured}
+                  onChange={(e) => setFeatured(e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "var(--adm-gold)" }}
+                />
+                Feature on homepage
+              </label>
+            </div>
+          </div>
+
+          {/* Card 5: Category & Marketing */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Classification
+            </h3>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as ProductCategory)}
+                className="admin-select"
+                style={{ width: "100%", padding: "10px 14px" }}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Merchandising Badge</label>
+              <select
+                value={badge}
+                onChange={(e) => setBadge(e.target.value as any)}
+                className="admin-select"
+                style={{ width: "100%", padding: "10px 14px" }}
+              >
+                {BADGES.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Card 6: Product Imagery */}
+          <div className="admin-panel" style={{ margin: 0, padding: "24px" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--adm-text)", marginBottom: "16px" }}>
+              Imagery
+            </h3>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">
+                Cover Image URL <span className="required">*</span>
+              </label>
+              <input
+                type="text"
+                value={mainImage}
+                onChange={(e) => setMainImage(e.target.value)}
+                placeholder="/images/nxtvie/product-oversized-tee-hd.jpg"
+                required
+                className="admin-input"
+              />
+              {mainImage && (
+                <div style={{ marginTop: "10px", width: "80px", height: "100px", borderRadius: "6px", overflow: "hidden", border: "1px solid var(--adm-border)" }}>
+                  <img src={mainImage} alt="Cover preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </div>
+              )}
+            </div>
+
+            <div className="admin-form-group" style={{ marginTop: "16px" }}>
+              <label className="admin-form-label">Gallery Images ({galleryImages.length})</label>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+                {galleryImages.map((img, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      width: "60px",
+                      height: "75px",
+                      borderRadius: "6px",
+                      overflow: "hidden",
+                      position: "relative",
+                      border: "1px solid var(--adm-border)",
+                    }}
+                  >
+                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      type="button"
+                      onClick={() => removeGalleryImage(idx)}
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        backgroundColor: "rgba(0,0,0,0.7)",
+                        color: "#EF4444",
+                        width: "18px",
+                        height: "18px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "12px",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input
+                  type="text"
+                  value={newImageUrl}
+                  onChange={(e) => setNewImageUrl(e.target.value)}
+                  placeholder="Paste additional image URL"
+                  className="admin-input"
+                  style={{ flex: 1, fontSize: "0.8rem" }}
+                />
+                <button
+                  type="button"
+                  onClick={addGalleryImage}
+                  className="admin-action-btn-secondary"
+                  style={{ padding: "6px 12px" }}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  );
+}
