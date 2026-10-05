@@ -18,6 +18,31 @@ import {
 import { formatCurrency } from "@/utils/format-currency";
 import { getAdminPayments, issueRefund } from "@/features/admin-dashboard/server/actions";
 
+const REFUNDS_KEY = "nxtvie_admin_refunded_orders";
+
+function getStoredRefunds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(REFUNDS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredRefund(orderId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = getStoredRefunds();
+    if (!existing.includes(orderId)) {
+      existing.push(orderId);
+      localStorage.setItem(REFUNDS_KEY, JSON.stringify(existing));
+    }
+  } catch (e) {
+    console.error("Failed to save refund state", e);
+  }
+}
+
 export default function AdminPaymentsPage() {
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +57,14 @@ export default function AdminPaymentsPage() {
     setLoading(true);
     try {
       const data = await getAdminPayments();
-      setPayments(data);
+      const localRefunds = getStoredRefunds();
+      const merged = data.map((p: any) => {
+        if (localRefunds.includes(p.orderId)) {
+          return { ...p, status: "refunded" };
+        }
+        return p;
+      });
+      setPayments(merged);
     } catch (err) {
       console.error(err);
     } finally {
@@ -59,6 +91,7 @@ export default function AdminPaymentsPage() {
     setRefunding(true);
     try {
       await issueRefund(refundModal.orderId, refundAmount, refundReason);
+      saveStoredRefund(refundModal.orderId);
       setPayments((prev) =>
         prev.map((item) =>
           item.orderId === refundModal.orderId ? { ...item, status: "refunded" } : item

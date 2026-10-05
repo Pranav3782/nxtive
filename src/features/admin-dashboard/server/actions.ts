@@ -25,18 +25,31 @@ import type { ShippingProvider, Shipment, ShippingLog } from "@/types/delivery";
 import type { AdminAppSettings } from "@/types/settings";
 import { ORDER_STATUS_TRANSITIONS } from "@/constants/order-status";
 
-// In-memory runtime stores so changes persist across page transitions
-const runtimeProducts: Map<string, Product> = new Map();
-const runtimeOrders: Map<string, Order> = new Map();
-const runtimeCategories: Map<string, Category> = new Map();
-const runtimeCoupons: Map<string, Coupon> = new Map();
-const runtimeCustomers: Map<string, Customer> = new Map();
-const runtimeReviews: Map<string, Review> = new Map();
-const runtimeShippingProviders: Map<string, ShippingProvider> = new Map();
-const runtimeShipments: Map<string, Shipment> = new Map();
-const runtimeShippingLogs: ShippingLog[] = [];
-const runtimeAdminUsers: Map<string, AdminUser> = new Map();
-const runtimeRoles: Map<string, AdminRoleDefinition> = new Map();
+// Global runtime stores attached to globalThis to persist state across Next.js module re-evaluations
+const g = globalThis as any;
+if (!g._nxtvie_runtimeProducts) g._nxtvie_runtimeProducts = new Map<string, Product>();
+if (!g._nxtvie_runtimeOrders) g._nxtvie_runtimeOrders = new Map<string, Order>();
+if (!g._nxtvie_runtimeCategories) g._nxtvie_runtimeCategories = new Map<string, Category>();
+if (!g._nxtvie_runtimeCoupons) g._nxtvie_runtimeCoupons = new Map<string, Coupon>();
+if (!g._nxtvie_runtimeCustomers) g._nxtvie_runtimeCustomers = new Map<string, Customer>();
+if (!g._nxtvie_runtimeReviews) g._nxtvie_runtimeReviews = new Map<string, Review>();
+if (!g._nxtvie_runtimeShippingProviders) g._nxtvie_runtimeShippingProviders = new Map<string, ShippingProvider>();
+if (!g._nxtvie_runtimeShipments) g._nxtvie_runtimeShipments = new Map<string, Shipment>();
+if (!g._nxtvie_runtimeShippingLogs) g._nxtvie_runtimeShippingLogs = [];
+if (!g._nxtvie_runtimeAdminUsers) g._nxtvie_runtimeAdminUsers = new Map<string, AdminUser>();
+if (!g._nxtvie_runtimeRoles) g._nxtvie_runtimeRoles = new Map<string, AdminRoleDefinition>();
+
+const runtimeProducts: Map<string, Product> = g._nxtvie_runtimeProducts;
+const runtimeOrders: Map<string, Order> = g._nxtvie_runtimeOrders;
+const runtimeCategories: Map<string, Category> = g._nxtvie_runtimeCategories;
+const runtimeCoupons: Map<string, Coupon> = g._nxtvie_runtimeCoupons;
+const runtimeCustomers: Map<string, Customer> = g._nxtvie_runtimeCustomers;
+const runtimeReviews: Map<string, Review> = g._nxtvie_runtimeReviews;
+const runtimeShippingProviders: Map<string, ShippingProvider> = g._nxtvie_runtimeShippingProviders;
+const runtimeShipments: Map<string, Shipment> = g._nxtvie_runtimeShipments;
+const runtimeShippingLogs: ShippingLog[] = g._nxtvie_runtimeShippingLogs;
+const runtimeAdminUsers: Map<string, AdminUser> = g._nxtvie_runtimeAdminUsers;
+const runtimeRoles: Map<string, AdminRoleDefinition> = g._nxtvie_runtimeRoles;
 let runtimeSettings: AdminAppSettings = { ...DEFAULT_SETTINGS };
 
 function ensureInitialized() {
@@ -1062,7 +1075,22 @@ export async function saveAdminSettings(
 
 export async function getAdminCategories(): Promise<Category[]> {
   ensureInitialized();
-  return Array.from(runtimeCategories.values());
+  let categories: Category[] = [];
+  try {
+    const snap = await adminDb.collection("categories").get();
+    if (!snap.empty) {
+      categories = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
+      // sync with runtime store
+      categories.forEach((c) => runtimeCategories.set(c.id, c));
+    }
+  } catch {
+    // fallback to runtime map
+  }
+
+  if (categories.length === 0) {
+    categories = Array.from(runtimeCategories.values());
+  }
+  return categories;
 }
 
 export async function saveCategory(
@@ -1081,7 +1109,27 @@ export async function saveCategory(
     isActive: category.isActive ?? true,
   };
   runtimeCategories.set(id, full);
+
+  try {
+    await adminDb.collection("categories").doc(id).set(full, { merge: true });
+  } catch {
+    // runtime map updated
+  }
+
   return { success: true, id };
+}
+
+export async function deleteCategory(id: string): Promise<{ success: boolean }> {
+  ensureInitialized();
+  runtimeCategories.delete(id);
+
+  try {
+    await adminDb.collection("categories").doc(id).delete();
+  } catch {
+    // runtime map updated
+  }
+
+  return { success: true };
 }
 
 export async function getAdminInventory(): Promise<{

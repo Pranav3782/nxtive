@@ -200,10 +200,6 @@ export default function CheckoutPage() {
             justifyContent: "space-between",
           }}
         >
-          <Link href="/" aria-label="Go home">
-            <NxtvieLogo size={22} color="#111110" />
-          </Link>
-
           <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#6B655D" }}>
             <Lock size={13} color="#2B9348" />
             <span>Secure 256-Bit Encrypted Checkout</span>

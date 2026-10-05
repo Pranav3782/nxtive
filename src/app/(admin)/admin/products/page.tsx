@@ -20,6 +20,42 @@ import { formatCurrency } from "@/utils/format-currency";
 import { getAdminProducts, deleteProduct, saveProduct } from "@/features/admin-dashboard/server/actions";
 import type { Product } from "@/types/product";
 
+const DELETED_PRODUCTS_KEY = "nxtvie_admin_deleted_products";
+const CUSTOM_PRODUCTS_KEY = "nxtvie_admin_custom_products";
+
+function getStoredDeletedProducts(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(DELETED_PRODUCTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getStoredCustomProducts(): Product[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(CUSTOM_PRODUCTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDeletedProduct(id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = getStoredDeletedProducts();
+    if (!existing.includes(id)) {
+      existing.push(id);
+      localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(existing));
+    }
+  } catch (e) {
+    console.error("Failed to save deleted product", e);
+  }
+}
+
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +74,15 @@ export default function AdminProductsPage() {
         search: search ? search : undefined,
         stockStatus: stockFilter !== "all" ? stockFilter : undefined,
       });
-      setProducts(data);
+      const deletedIds = getStoredDeletedProducts();
+      const customProducts = getStoredCustomProducts();
+
+      const productMap = new Map<string, Product>();
+      data.forEach((p) => productMap.set(p.id, p));
+      customProducts.forEach((p) => productMap.set(p.id, p));
+
+      const merged = Array.from(productMap.values()).filter((p) => !deletedIds.includes(p.id));
+      setProducts(merged);
     } catch (err) {
       console.error("Failed to fetch products", err);
     } finally {
@@ -62,6 +106,7 @@ export default function AdminProductsPage() {
     setShowConfirmModal(null);
     try {
       await deleteProduct(id);
+      saveDeletedProduct(id);
       setProducts((prev) => prev.filter((p) => p.id !== id));
       setSelectedIds((prev) => prev.filter((item) => item !== id));
     } catch {

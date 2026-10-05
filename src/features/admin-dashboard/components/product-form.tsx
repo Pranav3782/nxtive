@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -22,7 +22,7 @@ interface ProductFormProps {
   isEdit?: boolean;
 }
 
-const CATEGORIES: ProductCategory[] = [
+const DEFAULT_CATEGORIES: string[] = [
   "T-Shirts",
   "Shirts",
   "Hoodies",
@@ -30,6 +30,23 @@ const CATEGORIES: ProductCategory[] = [
   "Jackets",
   "Accessories",
 ];
+
+const CUSTOM_CATEGORIES_KEY = "nxtvie_admin_custom_categories";
+
+function getDynamicCategoryNames(): string[] {
+  if (typeof window === "undefined") return DEFAULT_CATEGORIES;
+  try {
+    const raw = localStorage.getItem(CUSTOM_CATEGORIES_KEY);
+    const customList: { name: string }[] = raw ? JSON.parse(raw) : [];
+    const set = new Set<string>(DEFAULT_CATEGORIES);
+    customList.forEach((item) => {
+      if (item.name) set.add(item.name);
+    });
+    return Array.from(set);
+  } catch {
+    return DEFAULT_CATEGORIES;
+  }
+}
 
 const BADGES: (ProductBadge | "None")[] = [
   "None",
@@ -41,10 +58,35 @@ const BADGES: (ProductBadge | "None")[] = [
 
 const AVAILABLE_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "28", "30", "32", "34", "36"];
 
+const CUSTOM_PRODUCTS_KEY = "nxtvie_admin_custom_products";
+
+function saveStoredProduct(product: Product) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(CUSTOM_PRODUCTS_KEY);
+    const existing: Product[] = raw ? JSON.parse(raw) : [];
+    const idx = existing.findIndex((p) => p.id === product.id);
+    if (idx >= 0) {
+      existing[idx] = product;
+    } else {
+      existing.unshift(product);
+    }
+    localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(existing));
+  } catch (e) {
+    console.error("Failed to save product in localStorage", e);
+  }
+}
+
 export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => getDynamicCategoryNames());
+
+  useEffect(() => {
+    setCategoryOptions(getDynamicCategoryNames());
+  }, []);
 
   // Form State
   const [title, setTitle] = useState(initialProduct?.title || "");
@@ -154,7 +196,6 @@ export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
       const details = detailsText.split("\n").filter((l) => l.trim().length > 0);
       const fabricCare = fabricCareText.split("\n").filter((l) => l.trim().length > 0);
 
-      // Generate variant matrix
       const variants = selectedSizes.flatMap((s) =>
         colors.map((c) => ({
           sku: `${slug.toUpperCase().slice(0, 4)}-${s}-${c.name.toUpperCase().slice(0, 3)}`,
@@ -190,6 +231,36 @@ export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
 
       const res = await saveProduct(productPayload);
       if (res.success) {
+        const fullProduct: Product = {
+          id: res.id || productPayload.id || `prod-${Date.now()}`,
+          title: productPayload.title!,
+          slug: productPayload.slug!,
+          category: productPayload.category!,
+          badge: productPayload.badge,
+          price: productPayload.price!,
+          originalPrice: productPayload.originalPrice,
+          totalStock: productPayload.totalStock!,
+          lowStockThreshold: productPayload.lowStockThreshold!,
+          inStock: productPayload.inStock!,
+          featured: productPayload.featured!,
+          fit: productPayload.fit!,
+          sizes: productPayload.sizes!,
+          colors: productPayload.colors!,
+          description: productPayload.description!,
+          details: productPayload.details!,
+          fabricCare: productPayload.fabricCare!,
+          image: productPayload.image!,
+          images: productPayload.images!,
+          variants: productPayload.variants!,
+          collections: initialProduct?.collections || [productPayload.category!],
+          rating: initialProduct?.rating || 5.0,
+          reviewCount: initialProduct?.reviewCount || 0,
+          createdAt: initialProduct?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        saveStoredProduct(fullProduct);
+
         setMessage({
           type: "success",
           text: isEdit ? "Apparel updated successfully!" : "New apparel created successfully!",
@@ -227,9 +298,16 @@ export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
             display: "inline-flex",
             alignItems: "center",
             gap: "8px",
-            color: "var(--adm-text-muted)",
-            fontSize: "0.85rem",
+            padding: "10px 20px",
+            borderRadius: "9999px",
+            backgroundColor: "#FFFFFF",
+            color: "#121110",
+            fontSize: "13.5px",
+            fontWeight: 700,
             textDecoration: "none",
+            border: "1px solid rgba(0,0,0,0.14)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+            transition: "all 0.2s ease",
           }}
         >
           <ArrowLeft size={16} />
@@ -240,10 +318,26 @@ export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
           <button
             type="submit"
             disabled={submitting}
-            className="admin-action-btn-primary"
+            style={{
+              padding: "11px 26px",
+              borderRadius: "9999px",
+              backgroundColor: "#121110",
+              color: "#FFFFFF",
+              fontSize: "14px",
+              fontWeight: 800,
+              letterSpacing: "0.02em",
+              border: "1px solid rgba(255,255,255,0.12)",
+              cursor: submitting ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              boxShadow: "0 6px 20px rgba(18, 17, 16, 0.22)",
+              opacity: submitting ? 0.75 : 1,
+              transition: "all 0.2s ease",
+            }}
           >
-            <Save size={16} />
-            <span>{submitting ? "Saving..." : isEdit ? "Update Apparel" : "Publish Apparel"}</span>
+            <Sparkles size={16} color="#F2AC24" />
+            <span>{submitting ? "Saving..." : isEdit ? "Update Apparel Item" : "Publish Apparel Item"}</span>
           </button>
         </div>
       </div>
@@ -577,7 +671,7 @@ export function ProductForm({ initialProduct, isEdit }: ProductFormProps) {
                 className="admin-select"
                 style={{ width: "100%", padding: "10px 14px" }}
               >
-                {CATEGORIES.map((c) => (
+                {categoryOptions.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>

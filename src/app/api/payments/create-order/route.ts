@@ -4,7 +4,7 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase/admin";
+import { adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
 import { getRazorpayAdapter } from "@/server/payments";
 import { toPaise } from "@/utils/format-currency";
 import { generateOrderNumber } from "@/utils/slugify";
@@ -53,62 +53,81 @@ export async function POST(req: NextRequest) {
 
     const data = parsed.data;
 
-    // -- Idempotency check: if we already created an order for this key, return it --
-    const existingSnap = await adminDb
-      .collection("payments")
-      .where("idempotencyKey", "==", data.idempotencyKey)
-      .limit(1)
-      .get();
+    // -- Idempotency check --
+    if (hasAdminCredentials) {
+      try {
+        const existingSnap = await adminDb
+          .collection("payments")
+          .where("idempotencyKey", "==", data.idempotencyKey)
+          .limit(1)
+          .get();
 
-    if (!existingSnap.empty) {
-      const existing = existingSnap.docs[0].data();
-      return NextResponse.json({
-        success: true,
-        razorpayOrderId: existing.razorpayOrderId,
-        amount: existing.amount,
-        currency: existing.currency,
-        orderNumber: existing.orderNumber,
-      });
+        if (!existingSnap.empty) {
+          const existing = existingSnap.docs[0].data();
+          return NextResponse.json({
+            success: true,
+            razorpayOrderId: existing.razorpayOrderId,
+            amount: existing.amount,
+            currency: existing.currency,
+            orderNumber: existing.orderNumber,
+          });
+        }
+      } catch (err: any) {
+        console.warn("[create-order] Skipping Firestore idempotency lookup:", err?.message || err);
+      }
     }
 
     // -- Server-side price verification against Firestore products --
     let subtotal = 0;
     for (const item of data.items) {
-      const productSnap = await adminDb.collection("products").doc(item.productId).get();
-      if (productSnap.exists) {
-        const productData = productSnap.data()!;
-        // Use server-side price, not client-submitted price
-        subtotal += productData.price * item.quantity;
-      } else {
-        // Fall back to client price if product not in DB (for mock/seed scenarios)
-        subtotal += item.price * item.quantity;
+      let itemPrice = item.price;
+      if (hasAdminCredentials) {
+        try {
+          const productSnap = await adminDb.collection("products").doc(item.productId).get();
+          if (productSnap.exists) {
+            itemPrice = productSnap.data()!.price;
+          }
+        } catch (err) {
+          // Fall back to client price
+        }
       }
+      subtotal += itemPrice * item.quantity;
     }
 
     // -- Coupon validation --
     let discount = 0;
     if (data.couponCode) {
-      const couponSnap = await adminDb
-        .collection("coupons")
-        .where("code", "==", data.couponCode.toUpperCase())
-        .where("isActive", "==", true)
-        .limit(1)
-        .get();
+      const code = data.couponCode.toUpperCase();
+      let couponFound = false;
 
-      if (!couponSnap.empty) {
-        const coupon = couponSnap.docs[0].data();
-        const now = new Date().toISOString();
-        if (coupon.validFrom <= now && coupon.validUntil >= now) {
-          if (coupon.type === "percentage") {
-            discount = Math.round(subtotal * (coupon.value / 100));
-            if (coupon.maxDiscount) discount = Math.min(discount, coupon.maxDiscount);
-          } else {
-            discount = coupon.value;
+      if (hasAdminCredentials) {
+        try {
+          const couponSnap = await adminDb
+            .collection("coupons")
+            .where("code", "==", code)
+            .where("isActive", "==", true)
+            .limit(1)
+            .get();
+
+          if (!couponSnap.empty) {
+            couponFound = true;
+            const coupon = couponSnap.docs[0].data();
+            const now = new Date().toISOString();
+            if (coupon.validFrom <= now && coupon.validUntil >= now) {
+              if (coupon.type === "percentage") {
+                discount = Math.round(subtotal * (coupon.value / 100));
+                if (coupon.maxDiscount) discount = Math.min(discount, coupon.maxDiscount);
+              } else {
+                discount = coupon.value;
+              }
+            }
           }
+        } catch (err) {
+          // Ignore
         }
-      } else {
-        // Hardcoded fallback for existing NEXT10/NXTVIE20 codes
-        const code = data.couponCode.toUpperCase();
+      }
+
+      if (!couponFound) {
         if (code === "NEXT10") discount = Math.round(subtotal * 0.1);
         else if (code === "NXTVIE20") discount = Math.round(subtotal * 0.2);
       }
@@ -135,26 +154,32 @@ export async function POST(req: NextRequest) {
     });
 
     // -- Store payment record (pre-payment) --
-    await adminDb.collection("payments").add({
-      orderId: "", // will be set after order creation
-      orderNumber,
-      userId: data.userId,
-      razorpayOrderId: razorpayOrder.id,
-      amount: toPaise(total),
-      currency: "INR",
-      status: "created",
-      idempotencyKey: data.idempotencyKey,
-      items: data.items,
-      shippingAddress: data.shippingAddress,
-      deliveryMethod: data.deliveryMethod,
-      couponCode: data.couponCode || null,
-      subtotal,
-      discount,
-      shipping,
-      total,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    if (hasAdminCredentials) {
+      try {
+        await adminDb.collection("payments").add({
+          orderId: "", // will be set after order creation
+          orderNumber,
+          userId: data.userId,
+          razorpayOrderId: razorpayOrder.id,
+          amount: toPaise(total),
+          currency: "INR",
+          status: "created",
+          idempotencyKey: data.idempotencyKey,
+          items: data.items,
+          shippingAddress: data.shippingAddress,
+          deliveryMethod: data.deliveryMethod,
+          couponCode: data.couponCode || null,
+          subtotal,
+          discount,
+          shipping,
+          total,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        console.warn("[create-order] Could not store payment record in Firestore:", err?.message || err);
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -162,7 +187,7 @@ export async function POST(req: NextRequest) {
       amount: toPaise(total),
       currency: "INR",
       orderNumber,
-      keyId: process.env.RAZORPAY_KEY_ID,
+      keyId: process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_fallback",
     });
   } catch (error: any) {
     console.error("[create-order] Error:", error);

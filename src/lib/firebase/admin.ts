@@ -37,6 +37,13 @@ function getAdminApp(): App {
 
 const adminApp = getAdminApp();
 
+export const hasAdminCredentials = !!(
+  process.env.FIREBASE_ADMIN_CLIENT_EMAIL &&
+  process.env.FIREBASE_ADMIN_PRIVATE_KEY
+);
+
 export const adminDb: Firestore = getFirestore(adminApp);
 export const adminAuth: Auth = getAuth(adminApp);
 export { adminApp };
+
+
