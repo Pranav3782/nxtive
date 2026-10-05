@@ -5,6 +5,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
 import { getRazorpayAdapter } from "@/server/payments";
+import { saveAdminOrder } from "@/features/admin-dashboard/server/actions";
 import { z } from "zod";
 
 const verifySchema = z.object({
@@ -144,8 +145,32 @@ export async function POST(req: NextRequest) {
         orderId: orderRef.id,
       });
 
-      return { orderId: orderRef.id, orderNumber: paymentData.orderNumber };
+      return { orderId: orderRef.id, orderNumber: paymentData.orderNumber, orderData };
     });
+
+    try {
+      await saveAdminOrder({
+        id: result.orderId,
+        orderNumber: result.orderNumber,
+        userId: result.orderData.userId,
+        items: result.orderData.items,
+        subtotal: result.orderData.subtotal,
+        discount: result.orderData.discount,
+        couponCode: result.orderData.couponCode,
+        shipping: result.orderData.shipping,
+        total: result.orderData.total,
+        status: "payment_confirmed",
+        paymentMethod: result.orderData.paymentMethod || "Razorpay",
+        paymentStatus: "paid",
+        razorpayOrderId: result.orderData.razorpayOrderId,
+        razorpayPaymentId: result.orderData.razorpayPaymentId,
+        shippingAddress: result.orderData.shippingAddress,
+        deliveryMethod: result.orderData.deliveryMethod,
+        createdAt: result.orderData.createdAt,
+      });
+    } catch (e) {
+      // Memory synced
+    }
 
     return NextResponse.json({
       success: true,

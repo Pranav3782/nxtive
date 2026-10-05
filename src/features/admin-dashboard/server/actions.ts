@@ -371,11 +371,14 @@ export async function getAdminOrders(filter?: {
     // ignore
   }
 
-  if (orders.length === 0) {
-    orders = Array.from(runtimeOrders.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-  }
+  // Merge with runtimeOrders so storefront orders placed in memory are included
+  const orderMap = new Map<string, Order>();
+  Array.from(runtimeOrders.values()).forEach((o) => orderMap.set(o.id, o));
+  orders.forEach((o) => orderMap.set(o.id, o));
+
+  orders = Array.from(orderMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 
   if (filter?.status && filter.status !== "all") {
     orders = orders.filter((o) => o.status.toLowerCase() === filter.status?.toLowerCase());
@@ -415,6 +418,62 @@ export async function getAdminOrderById(orderId: string): Promise<Order | null> 
     if (item.orderNumber === orderId || item.id === orderId) return item;
   }
   return null;
+}
+
+export async function saveAdminOrder(
+  order: Partial<Order>
+): Promise<{ success: boolean; id: string; order: Order }> {
+  ensureInitialized();
+
+  const id = order.id || `ord-${Date.now()}`;
+  const now = new Date().toISOString();
+  const orderNumber = order.orderNumber || `NX-${Date.now().toString().slice(-6)}`;
+
+  const fullOrder: Order = {
+    id,
+    orderNumber,
+    userId: order.userId || `cust-${Date.now()}`,
+    items: order.items || [],
+    subtotal: Number(order.subtotal) || 0,
+    discount: Number(order.discount) || 0,
+    couponCode: order.couponCode,
+    shipping: Number(order.shipping) || 0,
+    total: Number(order.total) || 0,
+    status: order.status || "pending",
+    statusHistory: order.statusHistory || [
+      { status: order.status || "pending", timestamp: now, note: "Order placed by customer", updatedBy: "customer" },
+    ],
+    paymentMethod: order.paymentMethod || "Cash on Delivery (COD)",
+    paymentStatus: order.paymentStatus || (order.paymentMethod?.toLowerCase().includes("cash") ? "cod_pending" : "paid"),
+    razorpayOrderId: order.razorpayOrderId,
+    razorpayPaymentId: order.razorpayPaymentId,
+    shippingAddress: order.shippingAddress || {
+      fullName: "Guest Customer",
+      email: "guest@example.com",
+      phone: "+91 9876543210",
+      street: "Main Street",
+      city: "Mumbai",
+      state: "Maharashtra",
+      postalCode: "400001",
+      country: "India",
+    },
+    deliveryMethod: order.deliveryMethod || "Standard Domestic (3-5 Days)",
+    deliveryDateEstimate: order.deliveryDateEstimate || "3-5 Business Days",
+    trackingNumber: order.trackingNumber || `EXP-NXT-${Math.floor(100000 + Math.random() * 900000)}`,
+    createdAt: order.createdAt || now,
+    updatedAt: now,
+  };
+
+  runtimeOrders.set(id, fullOrder);
+  runtimeOrders.set(orderNumber, fullOrder);
+
+  try {
+    await adminDb.collection("orders").doc(id).set(fullOrder, { merge: true });
+  } catch {
+    // memory store updated
+  }
+
+  return { success: true, id, order: fullOrder };
 }
 
 export async function updateOrderStatus(

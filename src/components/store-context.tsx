@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { createOrder as createFirestoreOrder } from "@/lib/firebase/firestore";
+import { saveAdminOrder } from "@/features/admin-dashboard/server/actions";
 
 export interface ProductItem {
   id: string;
@@ -408,6 +409,47 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
     // Reset idempotency key so next order gets a new one
     idempotencyRef.current = null;
+
+    // Sync order to Admin Panel store & localStorage
+    try {
+      const adminOrderPayload = {
+        id: newOrderId,
+        orderNumber: newOrderId,
+        userId: effectiveUserId,
+        items: orderItems.map((i) => ({
+          productId: i.id,
+          title: i.title,
+          price: i.price,
+          quantity: i.quantity,
+          selectedSize: i.selectedSize,
+          selectedColor: i.selectedColor,
+          image: i.image,
+        })),
+        subtotal: cartSubtotal,
+        discount: discountAmount,
+        shipping: finalShipping,
+        total: finalTotal,
+        status: "pending" as const,
+        paymentMethod,
+        paymentStatus: paymentMethod.toLowerCase().includes("cash") ? ("cod_pending" as const) : ("paid" as const),
+        shippingAddress,
+        deliveryMethod,
+        deliveryDateEstimate: deliveryMethod.includes("Priority") ? "1-2 Business Days" : "4-5 Business Days",
+        trackingNumber,
+        createdAt: new Date().toISOString(),
+      };
+
+      saveAdminOrder(adminOrderPayload).catch(() => {});
+
+      if (typeof window !== "undefined") {
+        const rawCustom = localStorage.getItem("nxtvie_admin_custom_orders");
+        const customOrders = rawCustom ? JSON.parse(rawCustom) : [];
+        customOrders.unshift(adminOrderPayload);
+        localStorage.setItem("nxtvie_admin_custom_orders", JSON.stringify(customOrders));
+      }
+    } catch (e) {
+      console.error("Failed to sync order to admin storage", e);
+    }
 
     setOrders((prev) => [newOrder, ...prev]);
     clearCart();

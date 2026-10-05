@@ -30,22 +30,66 @@ const STATUS_TABS: { key: string; label: string }[] = [
   { key: "return_requested", label: "Returns" },
 ];
 
+const CUSTOM_ORDERS_KEY = "nxtvie_admin_custom_orders";
+
+function getStoredCustomOrders(): Order[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(CUSTOM_ORDERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function AdminOrdersPage() {
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>(() => getStoredCustomOrders());
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
   const [search, setSearch] = useState("");
 
   const loadOrders = async () => {
     setLoading(true);
+    const customStored = getStoredCustomOrders();
     try {
       const data = await getAdminOrders({
         status: activeTab !== "all" ? activeTab : undefined,
         search: search.trim() ? search.trim() : undefined,
       });
-      setOrders(data);
+
+      const orderMap = new Map<string, Order>();
+      // First set data from server
+      data.forEach((o) => orderMap.set(o.id, o));
+      // Merge custom orders placed on storefront
+      customStored.forEach((o) => {
+        if (!orderMap.has(o.id)) {
+          orderMap.set(o.id, o);
+        }
+      });
+
+      let merged = Array.from(orderMap.values()).sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+
+      if (activeTab !== "all") {
+        merged = merged.filter((o) => o.status.toLowerCase() === activeTab.toLowerCase());
+      }
+
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        merged = merged.filter(
+          (o) =>
+            (o.orderNumber && o.orderNumber.toLowerCase().includes(q)) ||
+            (o.shippingAddress?.fullName && o.shippingAddress.fullName.toLowerCase().includes(q)) ||
+            (o.shippingAddress?.phone && o.shippingAddress.phone.includes(q)) ||
+            (o.shippingAddress?.email && o.shippingAddress.email.toLowerCase().includes(q))
+        );
+      }
+
+      setOrders(merged);
     } catch (err) {
       console.error("Failed to load orders", err);
+      setOrders(customStored);
     } finally {
       setLoading(false);
     }
