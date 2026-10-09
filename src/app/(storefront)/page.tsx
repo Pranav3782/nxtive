@@ -427,6 +427,7 @@ export default function HomePage() {
                 marginBottom: "20px",
                 border: "1px solid rgba(255, 255, 255, 0.18)",
               }}
+              className="hero-transparent-pill"
             >
               <span
                 style={{
@@ -650,6 +651,7 @@ export default function HomePage() {
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
+            className="hero-live-button"
           >
             {isPaused ? "Paused" : "Live"}
           </span>
@@ -1926,6 +1928,12 @@ export default function HomePage() {
           }
           .hero-left-scrim {
             background: linear-gradient(to top, rgba(10, 9, 8, 0.95) 0%, rgba(10, 9, 8, 0.7) 60%, rgba(10, 9, 8, 0.3) 100%) !important;
+          }
+          .hero-transparent-pill {
+            display: none !important;
+          }
+          .hero-live-button {
+            display: none !important;
           }
         }
 
